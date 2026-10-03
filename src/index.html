@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vocal Trainer</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --quiet: #6b6a66; --line: #e2e0da;
+  --accent: #2f6fdb; --good: #1f9d55; --warn: #c98a00; --bad: #d14343; --harm: #8a4fd6;
+  --grid: #ecebe6; --gridC: #d6d4cc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --quiet: #9a988f; --line: #33322f;
+    --accent: #6c9cff; --good: #3ccf7a; --warn: #e6b23a; --bad: #ff6b6b; --harm: #b98cff;
+    --grid: #262624; --gridC: #3a3936;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0 8px 0 0; }
+nav { display: flex; gap: 4px; }
+nav button { background: none; border: 0; padding: 8px 12px; border-radius: 8px; color: var(--quiet); font: inherit; cursor: pointer; }
+nav button.active { background: var(--bg); color: var(--ink); font-weight: 600; }
+.mic { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+select, input[type=number] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.btn { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.btn:disabled { opacity: .45; cursor: default; }
+.level { width: 80px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.level > div { height: 100%; width: 0; background: var(--good); transition: width .05s; }
+main { max-width: 1040px; margin: 0 auto; padding: 20px; }
+section.tab { display: none; }
+section.tab.active { display: block; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 8px; }
+.quiet { color: var(--quiet); }
+.row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.readout { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.note { font-size: 64px; font-weight: 700; line-height: 1; min-width: 2.6em; font-variant-numeric: tabular-nums; }
+.cents { font-size: 22px; font-variant-numeric: tabular-nums; }
+.meter { position: relative; height: 14px; width: 260px; border-radius: 7px; background: linear-gradient(90deg, var(--bad), var(--warn) 30%, var(--good) 45%, var(--good) 55%, var(--warn) 70%, var(--bad)); opacity: .9; }
+.meter > i { position: absolute; top: -4px; width: 3px; height: 22px; background: var(--ink); left: 50%; border-radius: 2px; transition: left .06s; }
+canvas.roll { width: 100%; height: 340px; display: block; border-radius: 8px; background: var(--panel); }
+.big { font-size: 28px; font-weight: 700; }
+.result { font-size: 20px; font-weight: 600; min-height: 1.5em; }
+.k-on { color: var(--good); } .k-sharp, .k-flat { color: var(--warn); } .k-octave { color: var(--accent); } .k-harmony { color: var(--harm); } .k-off { color: var(--bad); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--quiet); font-weight: 500; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--bg); font-size: 13px; margin: 2px 4px 2px 0; }
+.steps li { margin: 6px 0; }
+.steps label { cursor: pointer; }
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; }
+.bars div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: .8; }
+.barlabels { display: flex; gap: 4px; font-size: 11px; color: var(--quiet); }
+.barlabels span { flex: 1; text-align: center; }
+.banner { padding: 10px 14px; border-radius: 8px; background: var(--bg); border: 1px dashed var(--line); margin-bottom: 16px; }
+.err { color: var(--bad); }
+@media (max-width: 640px) { .note { font-size: 48px; } .mic { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vocal Trainer</h1>
+  <nav id="nav">
+    <button data-tab="today" class="active">Today</button>
+    <button data-tab="live">Live pitch</button>
+    <button data-tab="drills">Drills</button>
+    <button data-tab="range">Range</button>
+    <button data-tab="progress">Progress</button>
+  </nav>
+  <div class="mic">
+    <select id="device" title="Microphone"><option value="">Default microphone</option></select>
+    <div class="level" title="Input level"><div id="level"></div></div>
+    <button class="btn primary" id="micBtn">Start mic</button>
+  </div>
+</header>
+<main>
+  <div id="micError" class="banner err" hidden></div>
+
+  <section class="tab active" id="tab-today">
+    <div class="card">
+      <h2>Today's 15 minutes</h2>
+      <p class="quiet">Do these in order. Stop for the day if your voice feels scratchy or tired.</p>
+      <ol class="steps" id="steps"></ol>
+      <p class="quiet" id="minutesToday"></p>
+    </div>
+    <div class="card">
+      <h2>Voice care</h2>
+      <p class="quiet">Sip water instead of clearing your throat. Warm up before every session. Never sing through pain. If hoarseness lasts more than 2 to 3 weeks, see an ENT or voice specialist.</p>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-live">
+    <div class="card">
+      <div class="readout">
+        <div class="note" id="liveNote">--</div>
+        <div>
+          <div class="cents" id="liveCents">&nbsp;</div>
+          <div class="meter"><i id="liveMeter"></i></div>
+        </div>
+        <div class="quiet" id="liveFreq"></div>
+      </div>
+    </div>
+    <div class="card"><canvas class="roll" id="roll"></canvas>
+      <p class="quiet" style="margin:8px 0 0">The line is your voice. Green when within 25 cents of a note, amber within 50. Each grey line is a semitone; the darker lines are C notes.</p>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-drills">
+    <div class="card">
+      <h2>Pitch drills</h2>
+      <div class="row">
+        <label>Drill <select id="drillMode">
+          <option value="single">Match single notes</option>
+          <option value="interval">Intervals (sing the second note)</option>
+          <option value="sustain">Sustain (hold 5 seconds)</option>
+        </select></label>
+        <label>Rounds <input type="number" id="drillRounds" value="10" min="3" max="30" style="width:64px"></label>
+        <label>From <select id="drillLo"></select></label>
+        <label>to <select id="drillHi"></select></label>
+        <label><input type="checkbox" id="drillDrone"> Keep the note playing while I sing (headphones)</label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="drillStart">Start drill</button>
+        <button class="btn" id="drillReplay" disabled>Replay note</button>
+        <button class="btn" id="drillStop" disabled>Stop</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><div class="quiet" id="drillPhase">Press Start. You'll hear a note, then sing it back.</div><div class="big" id="drillTarget">&nbsp;</div></div>
+        <div class="quiet" id="drillCount"></div>
+      </div>
+      <div class="result" id="drillResult"></div>
+      <canvas class="roll" id="drillRoll" style="height:260px;margin-top:8px"></canvas>
+    </div>
+    <div class="card" id="drillSummary" hidden></div>
+  </section>
+
+  <section class="tab" id="tab-range">
+    <div class="card">
+      <h2>Range test</h2>
+      <p class="quiet">Slide down or up gently and hold the note at the edge of what feels comfortable for about a second. No straining. The app keeps the furthest note you held steadily.</p>
+      <div class="row">
+        <button class="btn" data-range="low">Lowest note</button>
+        <button class="btn" data-range="highChest">Highest (normal voice)</button>
+        <button class="btn" data-range="highFalsetto">Highest (falsetto)</button>
+        <button class="btn primary" id="rangeSave" disabled>Save result</button>
+      </div>
+      <p class="big" id="rangeLive" style="margin:14px 0 4px">&nbsp;</p>
+      <p id="rangeSummary"></p>
+    </div>
+    <div class="card"><h2>History</h2><div id="rangeHistory" class="quiet">No range tests yet.</div></div>
+  </section>
+
+  <section class="tab" id="tab-progress">
+    <div class="card"><h2>Practice minutes, last 14 days</h2><div class="bars" id="bars"></div><div class="barlabels" id="barlabels"></div></div>
+    <div class="card"><h2>Drill sessions</h2><div id="sessions" class="quiet">No drills yet.</div></div>
+    <div class="card row">
+      <button class="btn" id="exportBtn">Export my data (JSON)</button>
+      <span class="quiet">Everything is stored in this browser only.</span>
+    </div>
+  </section>
+</main>
+<script>/*CORE*/</script>
+<script>/*APP*/</script>
+</body>
+</html>
