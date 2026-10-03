@@ -10,6 +10,24 @@ const assert = require('assert');
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'],
   });
   const page = await browser.newPage();
+  // Stand-in for the folder picker: an in-memory folder kept in sessionStorage so it survives reloads.
+  await page.addInitScript(() => {
+    const load = () => JSON.parse(sessionStorage.getItem('fakeDir') || '{}');
+    const save = (f) => sessionStorage.setItem('fakeDir', JSON.stringify(f));
+    const dir = {
+      name: 'VocalTrainerData',
+      async getFileHandle(name, opts = {}) {
+        const f = load();
+        if (!(name in f)) { if (!opts.create) throw new DOMException('missing', 'NotFoundError'); f[name] = ''; save(f); }
+        return {
+          async getFile() { return { text: async () => load()[name] }; },
+          async createWritable() { let buf = ''; return { write: async (t) => { buf += t; }, close: async () => { const g = load(); g[name] = buf; save(g); } }; },
+        };
+      },
+      async queryPermission() { return 'granted'; },
+    };
+    window.showDirectoryPicker = async () => dir;
+  });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('file://' + path.join(__dirname, '..', 'dist', 'vocal-trainer.html'));
@@ -66,6 +84,37 @@ const assert = require('assert');
   assert.match(await page.textContent('#rangeHistory'), /A3/);
   console.log('ok   range test records A3');
 
+  // Data folder: connect, check the CSVs, then wipe the browser copy and restore from them.
+  await page.click('nav button[data-tab=progress]');
+  await page.click('#folderChoose');
+  await page.waitForFunction(() => /Saving to the folder "VocalTrainerData"/.test(document.getElementById('folderStatus').textContent));
+  const csv = await page.evaluate(() => JSON.parse(sessionStorage.getItem('fakeDir')));
+  assert.deepStrictEqual(Object.keys(csv).sort(), ['attempts.csv', 'daily.csv', 'ranges.csv', 'sessions.csv']);
+  assert.match(csv['sessions.csv'], /,scale,five,1,9,22,/);
+  assert.match(csv['ranges.csv'], /,A3,/);
+  console.log('ok   choosing a folder writes four CSV files');
+  const before = await page.evaluate(() => ['sessions', 'ranges', 'minutes', 'done'].map((k) => localStorage.getItem('vt.' + k)));
+  // A new range test saves to the folder automatically.
+  await page.click('nav button[data-tab=range]');
+  await page.click('[data-range=highChest]');
+  await page.waitForFunction(() => /Holding A3/.test(document.getElementById('rangeLive').textContent), null, { timeout: 8000 });
+  await page.click('#rangeSave');
+  await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem('fakeDir'))['ranges.csv'].match(/\r\n/g) || []).length === 3, null, { timeout: 5000 });
+  console.log('ok   new results save to the folder automatically');
+  const saved = await page.evaluate(() => ['sessions', 'ranges', 'minutes', 'done'].map((k) => localStorage.getItem('vt.' + k)));
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.click('nav button[data-tab=progress]');
+  await page.click('#folderChoose');
+  await page.waitForFunction(() => /Restored 1 drill session from the folder/.test(document.getElementById('folderNote').textContent));
+  const restored = await page.evaluate(() => ['sessions', 'ranges', 'minutes', 'done'].map((k) => JSON.parse(localStorage.getItem('vt.' + k))));
+  const norm = (a) => a.map((v) => JSON.parse(v));
+  assert.deepStrictEqual(restored.slice(0, 2), norm(saved).slice(0, 2));
+  assert.deepStrictEqual(restored[3], norm(saved)[3]);
+  // Minutes may tick up between snapshots while the fake mic sings, so compare days only.
+  assert.deepStrictEqual(Object.keys(restored[2]), Object.keys(norm(saved)[2]));
+  assert.ok(before);
+  console.log('ok   wiping the browser copy and choosing the folder restores everything');
   await page.click('nav button[data-tab=progress]');
   await page.screenshot({ path: path.join(__dirname, 'progress.png'), fullPage: true });
   assert.deepStrictEqual(errors, []);

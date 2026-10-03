@@ -9,8 +9,11 @@
     },
     set(key, value) {
       try { localStorage.setItem('vt.' + key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+      if (DATA_KEYS.includes(key)) scheduleFolderSave();
     },
   };
+  const DATA_KEYS = ['sessions', 'ranges', 'minutes', 'done'];
+  const allData = () => ({ sessions: store.get('sessions', []), ranges: store.get('ranges', []), minutes: store.get('minutes', {}), done: store.get('done', {}) });
   const today = () => new Date().toLocaleDateString('en-CA');
 
   // ---------- tabs ----------
@@ -649,6 +652,124 @@
         [...sessions].reverse().slice(0, 50).map((s) => `<tr><td>${new Date(s.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td><td>${MODE_NAMES[s.mode] || s.mode}</td><td>${noteName(s.range[0])}–${noteName(s.range[1])}</td><td><b>${s.avgScore}</b></td><td>${s.onPitch}/${s.total ?? s.rounds}</td><td>${s.harmony}</td><td>${s.octave}</td></tr>`).join('') + '</table>';
     }
   }
+
+
+  // ---------- data folder (CSV files) ----------
+  // The browser stores data itself; when a folder is connected, every change is
+  // also written there as CSV. If the browser's copy is ever empty, connecting the
+  // same folder restores from the CSVs.
+  const CSV_NAMES = ['sessions.csv', 'attempts.csv', 'ranges.csv', 'daily.csv'];
+  var dataDir = null, saveTimer = null, lastSaved = null, folderNote = ''; // var: store.set may run before this line
+
+  const idb = (mode, fn) => new Promise((resolve, reject) => {
+    const open = indexedDB.open('vocal-trainer', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('kv');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      try {
+        const tx = open.result.transaction('kv', mode);
+        const req = fn(tx.objectStore('kv'));
+        tx.oncomplete = () => resolve(req.result);
+        tx.onerror = () => reject(tx.error);
+      } catch (err) { reject(err); }
+    };
+  });
+  const saveHandle = (h) => idb('readwrite', (st) => st.put(h, 'dataDir')).catch(() => {});
+  const loadHandle = () => idb('readonly', (st) => st.get('dataDir')).catch(() => null);
+
+  async function readFolder(dir) {
+    const files = {};
+    for (const name of CSV_NAMES) {
+      try { files[name] = await (await (await dir.getFileHandle(name)).getFile()).text(); } catch { /* not there yet */ }
+    }
+    return files;
+  }
+
+  async function writeFolder() {
+    if (!dataDir) return;
+    try {
+      const tables = window.VTcsv.exportTables(allData());
+      for (const [name, text] of Object.entries(tables)) {
+        const w = await (await dataDir.getFileHandle(name, { create: true })).createWritable();
+        await w.write(text);
+        await w.close();
+      }
+      lastSaved = new Date();
+      if (folderNote.startsWith('Could not save')) folderNote = '';
+    } catch (err) {
+      folderNote = 'Could not save: ' + (err.message || err.name);
+    }
+    renderFolder();
+  }
+
+  function scheduleFolderSave() {
+    if (!dataDir) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(writeFolder, 1500);
+  }
+
+  // Merge the folder's CSVs with the browser's copy, keep the result in both.
+  async function useFolder(dir) {
+    dataDir = dir;
+    const fromFolder = window.VTcsv.importTables(await readFolder(dir));
+    const local = allData();
+    const merged = window.VTcsv.mergeData(local, fromFolder);
+    const added = merged.sessions.length - local.sessions.length;
+    try {
+      for (const k of DATA_KEYS) localStorage.setItem('vt.' + k, JSON.stringify(merged[k]));
+    } catch { /* storage unavailable */ }
+    folderNote = added > 0 ? `Restored ${added} drill session${added === 1 ? '' : 's'} from the folder.` : '';
+    renderToday(); renderRangeHistory(); renderProgress();
+    await writeFolder();
+  }
+
+  async function chooseFolder() {
+    try {
+      const dir = await window.showDirectoryPicker({ id: 'vocal-trainer-data', mode: 'readwrite', startIn: 'documents' });
+      await saveHandle(dir);
+      await useFolder(dir);
+    } catch (err) {
+      if (err.name !== 'AbortError') { folderNote = 'Could not open that folder: ' + (err.message || err.name); renderFolder(); }
+    }
+  }
+
+  let pendingHandle = null;
+  async function reconnectFolder() {
+    if (!pendingHandle) return;
+    if ((await pendingHandle.requestPermission({ mode: 'readwrite' })) === 'granted') {
+      const h = pendingHandle; pendingHandle = null;
+      await useFolder(h);
+    }
+    renderFolder();
+  }
+
+  function renderFolder() {
+    const supported = 'showDirectoryPicker' in window;
+    let status;
+    if (!supported) status = 'This browser cannot save to a folder. Use Export below to back up.';
+    else if (dataDir) status = `Saving to the folder "${dataDir.name}"` + (lastSaved ? `, last saved ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : '.');
+    else if (pendingHandle) status = `Your data folder "${pendingHandle.name}" needs permission again before the app can save to it.`;
+    else status = 'Not saving to a folder yet. Choose one to keep your history as CSV files you can open in Excel.';
+    $('folderStatus').textContent = status;
+    $('folderNote').textContent = folderNote;
+    $('folderChoose').hidden = !supported;
+    $('folderChoose').textContent = dataDir || pendingHandle ? 'Change folder' : 'Choose folder';
+    $('folderReconnect').hidden = !pendingHandle;
+    $('folderBanner').hidden = !pendingHandle;
+  }
+
+  $('folderChoose').addEventListener('click', chooseFolder);
+  $('folderReconnect').addEventListener('click', reconnectFolder);
+  $('folderBannerBtn').addEventListener('click', reconnectFolder);
+
+  (async () => {
+    renderFolder();
+    if (!('showDirectoryPicker' in window)) return;
+    const h = await loadHandle();
+    if (!h) return;
+    if ((await h.queryPermission({ mode: 'readwrite' })) === 'granted') await useFolder(h);
+    else { pendingHandle = h; renderFolder(); }
+  })();
 
   $('exportBtn').addEventListener('click', () => {
     const data = { exported: new Date().toISOString(), sessions: store.get('sessions', []), ranges: store.get('ranges', []), minutes: store.get('minutes', {}), done: store.get('done', {}) };

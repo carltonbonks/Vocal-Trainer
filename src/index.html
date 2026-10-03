@@ -21,6 +21,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
 header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
 header h1 { font-size: 17px; margin: 0 8px 0 0; }
@@ -104,6 +105,10 @@ th { color: var(--quiet); font-weight: 500; }
 </header>
 <main>
   <div id="micError" class="banner err" hidden></div>
+  <div id="folderBanner" class="banner row" hidden>
+    <span>The app needs your permission again to keep saving to your data folder.</span>
+    <button class="btn primary small" id="folderBannerBtn">Allow</button>
+  </div>
 
   <section class="tab active" id="tab-today">
     <div class="card">
@@ -194,13 +199,21 @@ th { color: var(--quiet); font-weight: 500; }
   <section class="tab" id="tab-progress">
     <div class="card"><h2>Practice minutes, last 14 days</h2><div class="bars" id="bars"></div><div class="barlabels" id="barlabels"></div></div>
     <div class="card"><h2>Drill sessions</h2><div id="sessions" class="quiet">No drills yet.</div></div>
-    <div class="card row">
-      <button class="btn" id="exportBtn">Export my data (JSON)</button>
-      <span class="quiet">Everything is stored in this browser only.</span>
+    <div class="card">
+      <h2>Your data</h2>
+      <p id="folderStatus"></p>
+      <p class="quiet" id="folderNote"></p>
+      <div class="row">
+        <button class="btn primary" id="folderReconnect" hidden>Allow saving again</button>
+        <button class="btn" id="folderChoose">Choose folder</button>
+        <button class="btn" id="exportBtn">Export everything (JSON)</button>
+      </div>
+      <p class="quiet" style="margin-bottom:0">The folder gets four files: sessions.csv (one row per drill), attempts.csv (every note you sang), ranges.csv and daily.csv (minutes and skills ticked). If the app's own copy is ever wiped, choose the same folder to restore it.</p>
     </div>
   </section>
 </main>
 <script>/*CORE*/</script>
+<script>/*CSV*/</script>
 <script>/*APP*/</script>
 <script>
   // Offline support and install when served over http(s); opening the file directly skips this.
