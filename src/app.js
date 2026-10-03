@@ -749,7 +749,7 @@
     if (!supported) status = 'This browser cannot save to a folder. Use Export below to back up.';
     else if (dataDir) status = `Saving to the folder "${dataDir.name}"` + (lastSaved ? `, last saved ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : '.');
     else if (pendingHandle) status = `Your data folder "${pendingHandle.name}" needs permission again before the app can save to it.`;
-    else status = 'Not saving to a folder yet. Choose one to keep your history as CSV files you can open in Excel.';
+    else status = 'Not saving to a folder yet. Choose one (the data folder inside your VocalTrainer folder is a good spot) to keep your history as CSV files you can open in Excel.';
     $('folderStatus').textContent = status;
     $('folderNote').textContent = folderNote;
     $('folderChoose').hidden = !supported;

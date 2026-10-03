@@ -19,7 +19,7 @@ version = hashlib.sha1(html.encode()).hexdigest()[:10]
 (out / "sw.js").write_text((src / "pwa/sw.js").read_text().replace("__VERSION__", version))
 for name in ["manifest.webmanifest", "icon.svg"]:
     shutil.copy(src / "pwa" / name, out / name)
-print(f"built dist/ (page {len(html) // 1024} KB, version {version}); run render_icons.js for PNG icons")
+print(f"built dist/ (page {len(html) // 1024} KB, version {version}); run scripts/render_icons.js for PNG icons")
 
 # Windows desktop bundle: the page, an icon, and a one-time setup script.
 import struct
@@ -34,7 +34,15 @@ readme = (
     "2. Double-click Install-Vocal-Trainer.bat.\r\n"
     "   If Windows shows 'Windows protected your PC', click More info > Run anyway.\r\n"
     "3. Open Vocal Trainer from the Desktop icon or the Start menu.\r\n\r\n"
-    "To update, run the installer from a newer zip. Your practice history is kept.\r\n"
+    "To update, extract a newer zip over this folder and run the installer again.\r\n"
+    "Your practice history is kept.\r\n\r\n"
+    "Keep your practice data in the data folder: in the app, go to Progress >\r\n"
+    "Your data > Choose folder and pick it. The installer files here can be\r\n"
+    "replaced at any time; the data folder is never touched by updates.\r\n"
+)
+data_readme = (
+    "Vocal Trainer saves your practice history here as CSV files once you pick\r\n"
+    "this folder in the app (Progress > Your data > Choose folder).\r\n"
 )
 with zipfile.ZipFile(out / "vocal-trainer-windows.zip", "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("VocalTrainer/vocal-trainer.html", html)
@@ -42,4 +50,5 @@ with zipfile.ZipFile(out / "vocal-trainer-windows.zip", "w", zipfile.ZIP_DEFLATE
     z.write(src / "windows/setup.ps1", "VocalTrainer/setup.ps1")
     z.write(src / "windows/Install-Vocal-Trainer.bat", "VocalTrainer/Install-Vocal-Trainer.bat")
     z.writestr("VocalTrainer/README.txt", readme)
+    z.writestr("VocalTrainer/data/README.txt", data_readme)
 print("built dist/vocal-trainer-windows.zip")

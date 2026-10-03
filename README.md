@@ -8,5 +8,5 @@ Open `dist/vocal-trainer.html` in Chrome or Edge, or serve `dist/` over https (e
 - `src/csv.js` lossless conversion between stored data and the four CSV files, plus merging; the app writes them to a folder the user picks (File System Access API)
 - `src/app.js` UI and audio
 - `src/pwa/` manifest, service worker, icon
-- `python3 build.py` builds `dist/`, including `vocal-trainer-windows.zip` (page, icon, and a setup script that adds Desktop and Start menu shortcuts opening it in an Edge app window); `node render_icons.js` renders the PNG icons first (needs Playwright)
+- `python3 build.py` builds `dist/`, including `vocal-trainer-windows.zip` (page, icon, and a setup script that adds Desktop and Start menu shortcuts opening it in an Edge app window); `node scripts/render_icons.js` renders the PNG icons first (needs Playwright)
 - `node test/core.test.js` and `node test/csv.test.js` unit tests; `node test/e2e.test.js` drives the page in Chromium with a fake mic singing A3
