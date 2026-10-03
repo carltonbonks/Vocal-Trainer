@@ -98,5 +98,32 @@ test('stableNote finds a held note and ignores a slide', () => {
   assert.strictEqual(VT.stableNote(frames((t) => 45 + 4 * t, 1)), null);
 });
 
+test('scoreSequence scores each slot of a 5-note scale', () => {
+  const targets = [48, 50, 52, 53, 55];
+  const slot = 0.7;
+  // Sings the first four correctly, then lands a third below the last note.
+  const sung = [48, 50, 52, 53, 52];
+  const fr = frames((t) => sung[Math.min(4, Math.floor(t / slot))] + 0.05, slot * 5);
+  const r = VT.scoreSequence(fr, targets, slot);
+  assert.strictEqual(r.score, 80);
+  assert.deepStrictEqual(r.notes.map((n) => n.hit), [true, true, true, true, false]);
+  assert.strictEqual(r.notes[4].kind, 'harmony');
+});
+
+test('scoreSequence marks silent slots as missed', () => {
+  const r = VT.scoreSequence(frames(() => 48, 0.7), [48, 50], 0.7);
+  assert.strictEqual(r.notes[1].kind, 'missed');
+  assert.strictEqual(r.score, 50);
+});
+
+test('freshness rises with daily practice and fades when skipped', () => {
+  const days = (n, from = '2026-10-10') => [...Array(n)].map((_, i) => new Date(Date.parse(from) - i * 864e5).toISOString().slice(0, 10));
+  assert.strictEqual(VT.freshness([], '2026-10-10'), 0);
+  assert.ok(VT.freshness(days(14), '2026-10-10') > 0.95);
+  const afterBreak = VT.freshness(days(14), '2026-10-14');
+  assert.ok(afterBreak > 0.3 && afterBreak < 0.5, String(afterBreak));
+  assert.ok(VT.freshness(['2026-10-10'], '2026-10-10') < 0.4);
+});
+
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passed');

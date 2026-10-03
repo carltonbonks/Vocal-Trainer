@@ -4,17 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vocal Trainer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2f6fdb">
 <style>
 :root {
   --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --quiet: #6b6a66; --line: #e2e0da;
   --accent: #2f6fdb; --good: #1f9d55; --warn: #c98a00; --bad: #d14343; --harm: #8a4fd6;
-  --grid: #ecebe6; --gridC: #d6d4cc;
+  --grid: #ecebe6; --gridC: #d6d4cc; --fade: #c9b9a6;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #161615; --panel: #1f1f1d; --ink: #ecebe6; --quiet: #9a988f; --line: #33322f;
     --accent: #6c9cff; --good: #3ccf7a; --warn: #e6b23a; --bad: #ff6b6b; --harm: #b98cff;
-    --grid: #262624; --gridC: #3a3936;
+    --grid: #262624; --gridC: #3a3936; --fade: #5a5048;
   }
 }
 * { box-sizing: border-box; }
@@ -51,8 +54,29 @@ table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 th { color: var(--quiet); font-weight: 500; }
 .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--bg); font-size: 13px; margin: 2px 4px 2px 0; }
-.steps li { margin: 6px 0; }
-.steps label { cursor: pointer; }
+.skill { display: grid; grid-template-columns: 32px 1fr 220px; gap: 14px; align-items: start; padding: 14px 0; border-top: 1px solid var(--line); }
+.skill:first-child { border-top: 0; }
+.skill-head { display: flex; gap: 10px; align-items: baseline; }
+.skill details { margin: 6px 0 8px; }
+.skill summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.skill details ol { margin: 6px 0; padding-left: 20px; }
+.skill details p { margin: 4px 0 0; font-size: 14px; }
+.skill.done .skill-head b { text-decoration: line-through; text-decoration-color: var(--good); }
+.tick input { position: absolute; opacity: 0; }
+.tick span { display: block; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; margin-top: 2px; }
+.tick input:checked + span { background: var(--good); border-color: var(--good); box-shadow: inset 0 0 0 4px var(--panel); }
+.tick input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fresh-label { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }
+.fresh-label .quiet { font-weight: 400; }
+.fresh-bar { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; margin: 6px 0; }
+.fresh-bar div { height: 100%; width: calc(var(--f) * 100%); background: linear-gradient(90deg, var(--fade), var(--good)); opacity: calc(0.35 + 0.65 * var(--f)); border-radius: 5px; transition: width .4s; }
+.dots { display: flex; gap: 3px; }
+.dots i { flex: 1; height: 6px; border-radius: 2px; background: var(--line); }
+.dots i.on { background: var(--good); }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.pill.streak { background: var(--accent); color: #fff; font-weight: 600; }
+#drillNotes { margin-top: 6px; }
+@media (max-width: 720px) { .skill { grid-template-columns: 32px 1fr; } .fresh { grid-column: 2; } }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; }
 .bars div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: .8; }
 .barlabels { display: flex; gap: 4px; font-size: 11px; color: var(--quiet); }
@@ -83,10 +107,13 @@ th { color: var(--quiet); font-weight: 500; }
 
   <section class="tab active" id="tab-today">
     <div class="card">
-      <h2>Today's 15 minutes</h2>
-      <p class="quiet">Do these in order. Stop for the day if your voice feels scratchy or tired.</p>
-      <ol class="steps" id="steps"></ol>
-      <p class="quiet" id="minutesToday"></p>
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Today's 15 minutes</h2>
+        <div class="row" style="gap:10px"><span class="pill" id="todayCount"></span><span class="pill streak" id="streak"></span></div>
+      </div>
+      <p class="quiet">Work top to bottom. Each bar shows how fresh a skill is: it fills with daily practice and fades a little each day you skip. Drills tick themselves off when you finish them.</p>
+      <div id="skills"></div>
+      <p class="quiet" id="minutesToday" style="margin-bottom:0"></p>
     </div>
     <div class="card">
       <h2>Voice care</h2>
@@ -118,6 +145,12 @@ th { color: var(--quiet); font-weight: 500; }
           <option value="single">Match single notes</option>
           <option value="interval">Intervals (sing the second note)</option>
           <option value="sustain">Sustain (hold 5 seconds)</option>
+          <option value="scale">Scales (sing a pattern back)</option>
+        </select></label>
+        <label id="scalePatternWrap">Pattern <select id="scalePattern">
+          <option value="five">5-note scale (do re mi fa so fa mi re do)</option>
+          <option value="arpeggio">Arpeggio (do mi so do so mi do)</option>
+          <option value="octave">Full octave scale, up and down</option>
         </select></label>
         <label>Rounds <input type="number" id="drillRounds" value="10" min="3" max="30" style="width:64px"></label>
         <label>From <select id="drillLo"></select></label>
@@ -136,6 +169,7 @@ th { color: var(--quiet); font-weight: 500; }
         <div class="quiet" id="drillCount"></div>
       </div>
       <div class="result" id="drillResult"></div>
+      <div id="drillNotes"></div>
       <canvas class="roll" id="drillRoll" style="height:260px;margin-top:8px"></canvas>
     </div>
     <div class="card" id="drillSummary" hidden></div>
@@ -168,5 +202,9 @@ th { color: var(--quiet); font-weight: 500; }
 </main>
 <script>/*CORE*/</script>
 <script>/*APP*/</script>
+<script>
+  // Offline support and install when served over http(s); opening the file directly skips this.
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js');
+</script>
 </body>
 </html>

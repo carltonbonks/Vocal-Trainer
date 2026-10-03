@@ -151,5 +151,36 @@
     return median(ms);
   }
 
-  root.VT = { NOTE_NAMES, freqToMidi, midiToFreq, noteName, parseNote, rms, detectPitch, median, classifyOffset, scoreAttempt, stableNote };
+  // Score a sung sequence (scales) where each target note has a fixed time slot.
+  // frames: [{t, midi}] with t measured from the start of the first slot.
+  // lead skips the start of each slot (the voice moving onto the note); lag allows for late singing.
+  function scoreSequence(frames, targets, slotDur, opts = {}) {
+    const lead = opts.lead ?? 0.2, lag = opts.lag ?? 0.1;
+    const notes = targets.map((target, i) => {
+      const a = i * slotDur + lead, b = (i + 1) * slotDur + lag;
+      const ms = frames.filter((f) => f.t >= a && f.t < b).map((f) => f.midi);
+      if (ms.length < 3) return { target, voiced: false, kind: 'missed', hit: false };
+      const dev = median(ms) - target;
+      const offset = classifyOffset(dev);
+      return { target, voiced: true, sung: median(ms), cents: Math.round(dev * 100), kind: offset.kind, label: offset.label, hit: Math.abs(dev) <= 0.5 };
+    });
+    const score = Math.round((notes.filter((n) => n.hit).length / targets.length) * 100);
+    return { notes, score };
+  }
+
+  // How fresh a skill is, from 0 to 1, given the dates it was practised.
+  // Each day of practice counts less as it ages (x0.75 per day), so daily practice
+  // approaches 1 and a skill left alone fades by about a quarter a day.
+  function freshness(doneDates, todayStr, decay = 0.75, full = 3) {
+    const day = (s) => Math.round(Date.parse(s + 'T00:00:00Z') / 864e5);
+    const now = day(todayStr);
+    let sum = 0;
+    for (const d of doneDates) {
+      const age = now - day(d);
+      if (age >= 0 && age <= 60) sum += Math.pow(decay, age);
+    }
+    return Math.min(1, sum / full);
+  }
+
+  root.VT = { NOTE_NAMES, freqToMidi, midiToFreq, noteName, parseNote, rms, detectPitch, median, classifyOffset, scoreAttempt, stableNote, scoreSequence, freshness };
 })(typeof window !== 'undefined' ? window : globalThis);

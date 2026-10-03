@@ -1,5 +1,5 @@
 (function () {
-  const { detectPitch, freqToMidi, midiToFreq, noteName, median, scoreAttempt, stableNote } = window.VT;
+  const { detectPitch, freqToMidi, midiToFreq, noteName, median, scoreAttempt, stableNote, scoreSequence, freshness } = window.VT;
   const $ = (id) => document.getElementById(id);
 
   // ---------- storage ----------
@@ -242,6 +242,16 @@
   // ---------- drills ----------
   let drill = null;
   const NOTE_DUR = 0.9, GAP = 0.15;
+  const SCALE_NOTE = 0.45, SCALE_GAP = 0.05, SLOT = 0.7, LEAD_IN = 0.8;
+  const SCALES = {
+    five: [0, 2, 4, 5, 7, 5, 4, 2, 0],
+    octave: [0, 2, 4, 5, 7, 9, 11, 12, 11, 9, 7, 5, 4, 2, 0],
+    arpeggio: [0, 4, 7, 12, 7, 4, 0],
+  };
+  const SKILL_FOR_MODE = { single: 'match', interval: 'match', sustain: 'sustain', scale: 'scales' };
+  const syncPatternVisibility = () => { $('scalePatternWrap').hidden = $('drillMode').value !== 'scale'; };
+  $('drillMode').addEventListener('change', syncPatternVisibility);
+  syncPatternVisibility();
 
   function pickRound(mode, lo, hi, last) {
     const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
@@ -265,6 +275,15 @@
       lo, hi, drone: $('drillDrone').checked, round: 0, results: [], target: null, phase: 'idle', frames: [], until: 0,
       startedAt: Date.now(),
     };
+    if (drill.mode === 'scale') {
+      // Classic warmup ladder: the same pattern, starting a semitone higher each round.
+      drill.pattern = SCALES[$('scalePattern').value];
+      const top = Math.max(...drill.pattern);
+      drill.roots = [];
+      for (let r = lo; r + top <= hi; r++) drill.roots.push(r);
+      if (!drill.roots.length) drill.roots = [lo];
+      drill.rounds = Math.min(drill.rounds, drill.roots.length);
+    }
     $('drillSummary').hidden = true;
     $('drillStart').disabled = true; $('drillStop').disabled = false; $('drillReplay').disabled = false;
     nextRound();
@@ -274,8 +293,14 @@
     if (!drill) return;
     if (drill.round >= drill.rounds) return finishDrill();
     drill.round++;
-    const r = pickRound(drill.mode, drill.lo, drill.hi, drill.target);
-    drill.refs = r.refs; drill.target = r.target;
+    if (drill.mode === 'scale') {
+      const root = drill.roots[drill.round - 1];
+      drill.refs = drill.pattern.map((p) => root + p);
+      drill.target = drill.refs[0];
+    } else {
+      const r = pickRound(drill.mode, drill.lo, drill.hi, drill.target);
+      drill.refs = r.refs; drill.target = r.target;
+    }
     $('drillResult').textContent = ''; $('drillResult').className = 'result';
     $('drillCount').textContent = `Round ${drill.round} of ${drill.rounds}`;
     playRefs();
@@ -283,15 +308,59 @@
 
   function playRefs() {
     const t0 = ctx.currentTime + 0.1;
-    drill.refs.forEach((m, i) => playNote(m, t0 + i * (NOTE_DUR + GAP), NOTE_DUR));
-    const end = t0 + drill.refs.length * (NOTE_DUR + GAP);
+    const scale = drill.mode === 'scale';
+    const dur = scale ? SCALE_NOTE : NOTE_DUR, gap = scale ? SCALE_GAP : GAP;
+    drill.refs.forEach((m, i) => playNote(m, t0 + i * (dur + gap), dur));
+    const end = t0 + drill.refs.length * (dur + gap);
     ignoreMicUntil = end + 0.05; // don't score the speaker
     drill.phase = 'listen'; drill.until = end; drill.frames = [];
-    $('drillPhase').textContent = drill.mode === 'interval' ? 'Listen to both notes, then sing the second one.' : 'Listen...';
-    $('drillTarget').textContent = drill.mode === 'interval' ? `${noteName(drill.refs[0])} then ?` : '?';
+    drill.target = drill.mode === 'scale' ? drill.refs[0] : drill.target;
+    $('drillPhase').textContent = scale ? 'Listen to the pattern. Then sing it back, one note per beat, following the blue band.'
+      : drill.mode === 'interval' ? 'Listen to both notes, then sing the second one.' : 'Listen...';
+    $('drillTarget').textContent = scale ? `Pattern from ${noteName(drill.refs[0])}` : drill.mode === 'interval' ? `${noteName(drill.refs[0])} then ?` : '?';
+    $('drillNotes').innerHTML = '';
+  }
+
+  function scaleTick(t, midi) {
+    if (drill.phase === 'listen' && t >= drill.until) {
+      drill.phase = 'sing';
+      drill.singStart = t + LEAD_IN;
+      drill.until = drill.singStart + SLOT * drill.refs.length + 0.15;
+      drill.slot = -1;
+      $('drillPhase').textContent = 'Get ready...';
+      return;
+    }
+    if (drill.phase !== 'sing') return;
+    const rel = t - drill.singStart;
+    if (midi !== null && rel >= 0) drill.frames.push({ t: rel, midi });
+    const slot = Math.min(drill.refs.length - 1, Math.floor(rel / SLOT));
+    if (rel >= 0 && slot !== drill.slot) {
+      drill.slot = slot;
+      drill.target = drill.refs[slot];
+      $('drillPhase').textContent = `Your turn: note ${slot + 1} of ${drill.refs.length}`;
+      $('drillTarget').textContent = noteName(drill.target);
+      if (drill.drone) { if (!drone) startDrone(drill.target); else drone.o.frequency.setValueAtTime(midiToFreq(drill.target), ctx.currentTime); }
+    }
+    if (t >= drill.until) evaluateScale();
+  }
+
+  function evaluateScale() {
+    stopDroneNow();
+    drill.phase = 'result';
+    const r = scoreSequence(drill.frames, drill.refs, SLOT);
+    const misses = r.notes.filter((n) => !n.hit);
+    const worst = misses.find((n) => n.kind === 'harmony' || n.kind === 'octave') || misses[0];
+    $('drillTarget').textContent = `Score ${r.score}`;
+    $('drillResult').textContent = !misses.length ? 'Every note on pitch.' : worst.kind === 'missed' ? `${misses.length} note${misses.length > 1 ? 's' : ''} missed or off. Try to keep singing through the whole pattern.` : `${misses.length} note${misses.length > 1 ? 's' : ''} off. ${noteName(worst.target)}: ${worst.label.toLowerCase()}.`;
+    $('drillResult').className = 'result k-' + (!misses.length ? 'on' : worst.kind === 'missed' ? 'off' : worst.kind);
+    $('drillNotes').innerHTML = r.notes.map((n) => `<span class="pill k-${n.hit ? 'on' : n.kind === 'missed' ? 'off' : n.kind}" title="${n.voiced ? n.label + ', ' + (n.cents > 0 ? '+' : '') + n.cents + ' cents' : 'not heard'}">${noteName(n.target)} ${n.hit ? '✓' : n.voiced ? '✗' : '–'}</span>`).join('');
+    drill.results.push({ root: drill.refs[0], voiced: r.notes.some((n) => n.voiced), score: r.score, notes: r.notes.map((n) => ({ target: n.target, kind: n.hit ? 'on' : n.kind, cents: n.cents })) });
+    $('drillPhase').textContent = drill.round < drill.rounds ? 'Next pattern, a semitone higher...' : '';
+    setTimeout(() => { if (drill && drill.phase === 'result') nextRound(); }, 2600);
   }
 
   function drillTick(t, midi) {
+    if (drill.mode === 'scale') return scaleTick(t, midi);
     if (drill.phase === 'listen' && t >= drill.until) {
       drill.phase = 'sing';
       drill.singStart = t;
@@ -333,17 +402,21 @@
     const res = drill.results;
     const sung = res.filter((r) => r.voiced);
     const avg = sung.length ? Math.round(sung.reduce((a, r) => a + r.score, 0) / sung.length) : 0;
-    const count = (k) => sung.filter((r) => r.kind === k).length;
+    // Scales are counted per note; the other drills per attempt.
+    const items = drill.mode === 'scale' ? res.flatMap((r) => r.notes) : sung;
+    const count = (k) => items.filter((r) => r.kind === k).length;
     const session = {
-      date: new Date().toISOString(), mode: drill.mode, rounds: res.length, avgScore: avg,
-      onPitch: count('on'), harmony: count('harmony'), octave: count('octave'), off: count('off') + count('sharp') + count('flat'),
+      date: new Date().toISOString(), mode: drill.mode, rounds: res.length, total: items.length, avgScore: avg,
+      onPitch: count('on'), harmony: count('harmony'), octave: count('octave'), off: items.length - count('on') - count('harmony') - count('octave'),
       range: [drill.lo, drill.hi], results: res,
     };
+    if (drill.mode === 'scale') session.pattern = $('scalePattern').value;
+    markDone(SKILL_FOR_MODE[drill.mode]);
     const all = store.get('sessions', []); all.push(session); store.set('sessions', all);
     const s = $('drillSummary');
     s.hidden = false;
     s.innerHTML = `<h2>Drill done: average score ${avg}</h2>
-      <p><span class="pill k-on">${session.onPitch} on pitch</span><span class="pill k-harmony">${session.harmony} on a harmony note</span><span class="pill k-octave">${session.octave} wrong octave</span><span class="pill k-off">${session.off} otherwise off</span></p>
+      <p><span class="pill k-on">${session.onPitch} on pitch</span><span class="pill k-harmony">${session.harmony} on a harmony note</span><span class="pill k-octave">${session.octave} wrong octave</span><span class="pill k-off">${session.off} ${drill.mode === 'scale' ? 'missed or ' : ''}otherwise off</span></p>
       <p class="quiet">${adviceFor(session)}</p>`;
     $('drillPhase').textContent = 'Done. Saved to Progress.';
     resetDrillButtons();
@@ -353,13 +426,14 @@
   function adviceFor(s) {
     if (s.harmony >= 2) return 'You landed on harmony notes several times. Before singing, hum the reference quietly in your head, then start softly and slide to the note while watching the line.';
     if (s.octave >= 2) return 'Several notes were in the wrong octave. Try the "keep the note playing" option with headphones so you can hear when you lock in.';
-    if (s.avgScore >= 80) return 'Strong round. Try widening the note range or switching to intervals.';
+    if (s.avgScore >= 80) return s.mode === 'scale' ? 'Strong round. Try the next pattern up: octave scale or arpeggio.' : 'Strong round. Try widening the note range or switching to intervals.';
     return 'Keep going. Accuracy usually improves within a couple of weeks of daily drills.';
   }
 
   function stopDrill() {
     if (!drill) return;
     stopDroneNow();
+    $('drillNotes').innerHTML = '';
     drill = null;
     ignoreMicUntil = 0;
     $('drillPhase').textContent = 'Stopped.';
@@ -425,30 +499,143 @@
   }
   renderRangeHistory();
 
-  // ---------- today ----------
-  const STEPS = [
-    ['warmup', 3, 'Warmup: straw phonation or lip trills, sliding gently up and down.'],
-    ['sustain', 3, 'Sustained tones: Drills tab, "Sustain". Keep the line flat.'],
-    ['match', 5, 'Pitch matching: Drills tab, single notes or intervals.'],
-    ['song', 4, 'Song: one or two phrases of Holland, 1945, in the right octave. Watch Live pitch.'],
+  // ---------- today: skills that fade without practice ----------
+  const SKILLS = [
+    {
+      key: 'warmup', mins: 3, name: 'Warmup', what: 'Gets your voice moving gently before any real singing.',
+      how: ['Hum through a drinking straw, or do lip trills (blow air through loose lips so they buzz like a motorboat).', 'Slide slowly from a low note to a high one and back, like a siren. Stay quiet and easy.', 'Nothing should feel pushed. If it scratches, stop for today.'],
+      why: 'Straw and lip-trill exercises balance air pressure on your vocal folds. Voice teachers use them first, especially for a tired voice.',
+      action: { label: 'Start 3-minute timer', timer: 180 },
+    },
+    {
+      key: 'sustain', mins: 2, name: 'Steady notes', what: 'Hold one note without it wobbling or drifting.',
+      how: ['The app plays a note. Sing it on "ah" and hold it for 5 seconds.', 'Watch the line: you want it flat and inside the blue band.', 'Breathe in low (belly moves out) before each note.'],
+      why: 'A steady tone is the base for pitch accuracy. If the note drifts while you hold it, it will drift in songs too.',
+      action: { label: 'Go to Sustain drill', mode: 'sustain' },
+    },
+    {
+      key: 'scales', mins: 3, name: 'Scales', what: 'Sing short note patterns up and down, a step higher each round.',
+      how: ['The app plays a pattern, like do-re-mi-fa-so-fa-mi-re-do.', 'Sing it back, one note per beat, following the moving blue band.', 'Each round starts a semitone higher. Stop before it strains.'],
+      why: 'Scales train your ear to move between notes accurately, which is exactly what a melody asks of you. They also widen your range gradually.',
+      action: { label: 'Go to Scales drill', mode: 'scale' },
+    },
+    {
+      key: 'match', mins: 3, name: 'Pitch matching', what: 'Hear a note, then sing that exact note back.',
+      how: ['Listen to the note. Hear it in your head before you open your mouth.', 'Start softly and let your voice settle onto the note.', 'Watch for "harmony" or "octave" results. Those are your habit to break.'],
+      why: 'This targets your main habit: landing on a harmony note instead of the melody. Interval mode is the harder version.',
+      action: { label: 'Go to Pitch drill', mode: 'single' },
+    },
+    {
+      key: 'song', mins: 4, name: 'Song phrase', what: 'Sing one or two lines of your current song.',
+      how: ['Pick one phrase of Holland, 1945. Listen to it once.', 'Sing it with the Live pitch view open and check you are in the right octave.', 'Repeat the same phrase until it feels easy, then move to the next one.'],
+      why: 'Songs are the goal. A phrase a day is enough to make steady progress without tiring your voice.',
+      action: { label: 'Start 4-minute timer', timer: 240 },
+    },
   ];
+
+  function doneDates(skill) {
+    const all = store.get('done', {});
+    return Object.keys(all).filter((d) => all[d][skill]);
+  }
+  function markDone(skill, value = true) {
+    if (!skill) return;
+    const all = store.get('done', {});
+    all[today()] = { ...(all[today()] || {}), [skill]: value };
+    store.set('done', all);
+    renderToday();
+  }
+  function daysAgo(dateStr) {
+    return Math.round((Date.parse(today() + 'T00:00:00Z') - Date.parse(dateStr + 'T00:00:00Z')) / 864e5);
+  }
+  function freshLabel(f, last) {
+    if (last === undefined) return 'Not started';
+    if (f >= 0.75) return 'Strong';
+    if (f >= 0.45) return 'Holding';
+    if (f >= 0.2) return 'Fading';
+    return 'Rusty';
+  }
+  function streak() {
+    const all = store.get('done', {});
+    const any = (d) => all[d] && Object.values(all[d]).some(Boolean);
+    let n = 0;
+    const d = new Date();
+    if (!any(d.toLocaleDateString('en-CA'))) d.setDate(d.getDate() - 1); // today not done yet keeps yesterday's streak
+    while (any(d.toLocaleDateString('en-CA'))) { n++; d.setDate(d.getDate() - 1); }
+    return n;
+  }
+
+  let timer = null;
   function renderToday() {
-    const done = store.get('done', {})[today()] || {};
-    $('steps').innerHTML = STEPS.map(([k, mins, text]) => `<li><label><input type="checkbox" data-step="${k}" ${done[k] ? 'checked' : ''}> <b>${mins} min</b> ${text}</label></li>`).join('');
+    const doneToday = store.get('done', {})[today()] || {};
+    const last14 = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 13 + i); return d.toLocaleDateString('en-CA'); });
+    const allDone = store.get('done', {});
+    $('skills').innerHTML = SKILLS.map((sk) => {
+      const dates = doneDates(sk.key);
+      const f = freshness(dates, today());
+      const last = dates.sort().at(-1);
+      const lastText = last === undefined ? 'Never practised' : daysAgo(last) === 0 ? 'Done today' : daysAgo(last) === 1 ? 'Last done yesterday' : `Last done ${daysAgo(last)} days ago`;
+      const running = timer && timer.skill === sk.key;
+      return `<div class="skill ${doneToday[sk.key] ? 'done' : ''}" style="--f:${f.toFixed(3)}">
+        <label class="tick" title="Mark done today"><input type="checkbox" data-skill="${sk.key}" ${doneToday[sk.key] ? 'checked' : ''}><span></span></label>
+        <div class="skill-body">
+          <div class="skill-head"><b>${sk.name}</b><span class="quiet">${sk.mins} min</span></div>
+          <div class="quiet">${sk.what}</div>
+          <details><summary>How to do it</summary><ol>${sk.how.map((h) => `<li>${h}</li>`).join('')}</ol><p class="quiet">${sk.why}</p></details>
+          <button class="btn small" data-action="${sk.key}">${running ? `Stop timer (${fmt(timer.left)})` : sk.action.label}</button>
+        </div>
+        <div class="fresh">
+          <div class="fresh-label"><span>${freshLabel(f, last)}</span><span class="quiet">${lastText}</span></div>
+          <div class="fresh-bar"><div></div></div>
+          <div class="dots">${last14.map((d) => `<i class="${allDone[d] && allDone[d][sk.key] ? 'on' : ''}" title="${d}"></i>`).join('')}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const n = streak();
+    $('streak').textContent = n ? `${n}-day streak` : 'Start a streak today';
+    const doneCount = SKILLS.filter((sk) => doneToday[sk.key]).length;
+    $('todayCount').textContent = `${doneCount} of ${SKILLS.length} done today`;
     const mins = store.get('minutes', {})[today()] || 0;
     $('minutesToday').textContent = `You've sung for about ${Math.round(mins)} minute${Math.round(mins) === 1 ? '' : 's'} today (counted while the mic hears your voice).`;
   }
-  $('steps').addEventListener('change', (e) => {
-    const k = e.target.dataset.step;
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  function chime() {
+    try {
+      if (!ctx) ctx = new AudioContext();
+      const t0 = ctx.currentTime + 0.05;
+      [72, 76, 79].forEach((m, i) => playNote(m, t0 + i * 0.18, 0.5));
+    } catch { /* audio unavailable */ }
+  }
+
+  $('skills').addEventListener('change', (e) => {
+    const k = e.target.dataset.skill;
+    if (k) markDone(k, e.target.checked);
+  });
+  $('skills').addEventListener('click', (e) => {
+    const k = e.target.dataset.action;
     if (!k) return;
-    const all = store.get('done', {});
-    all[today()] = { ...(all[today()] || {}), [k]: e.target.checked };
-    store.set('done', all);
+    const sk = SKILLS.find((x) => x.key === k);
+    if (sk.action.mode) {
+      $('drillMode').value = sk.action.mode;
+      syncPatternVisibility();
+      document.querySelector('nav button[data-tab=drills]').click();
+      return;
+    }
+    if (timer && timer.skill === k) { clearInterval(timer.id); timer = null; renderToday(); return; }
+    if (timer) clearInterval(timer.id);
+    timer = { skill: k, left: sk.action.timer };
+    timer.id = setInterval(() => {
+      timer.left--;
+      if (timer.left <= 0) { clearInterval(timer.id); timer = null; chime(); markDone(k); return; }
+      const b = document.querySelector(`[data-action="${k}"]`);
+      if (b) b.textContent = `Stop timer (${fmt(timer.left)})`;
+    }, 1000);
+    renderToday();
   });
   renderToday();
 
   // ---------- progress ----------
-  const MODE_NAMES = { single: 'Single notes', interval: 'Intervals', sustain: 'Sustain' };
+  const MODE_NAMES = { single: 'Single notes', interval: 'Intervals', sustain: 'Sustain', scale: 'Scales' };
   function renderProgress() {
     const mins = store.get('minutes', {});
     const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 13 + i); return d.toLocaleDateString('en-CA'); });
@@ -459,7 +646,7 @@
     const sessions = store.get('sessions', []);
     if (sessions.length) {
       $('sessions').innerHTML = '<table><tr><th>Date</th><th>Drill</th><th>Notes</th><th>Avg score</th><th>On pitch</th><th>Harmony</th><th>Octave</th></tr>' +
-        [...sessions].reverse().slice(0, 50).map((s) => `<tr><td>${new Date(s.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td><td>${MODE_NAMES[s.mode] || s.mode}</td><td>${noteName(s.range[0])}–${noteName(s.range[1])}</td><td><b>${s.avgScore}</b></td><td>${s.onPitch}/${s.rounds}</td><td>${s.harmony}</td><td>${s.octave}</td></tr>`).join('') + '</table>';
+        [...sessions].reverse().slice(0, 50).map((s) => `<tr><td>${new Date(s.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td><td>${MODE_NAMES[s.mode] || s.mode}</td><td>${noteName(s.range[0])}–${noteName(s.range[1])}</td><td><b>${s.avgScore}</b></td><td>${s.onPitch}/${s.total ?? s.rounds}</td><td>${s.harmony}</td><td>${s.octave}</td></tr>`).join('') + '</table>';
     }
   }
 

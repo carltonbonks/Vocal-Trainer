@@ -35,6 +35,29 @@ const assert = require('assert');
   await drill(61, /major third below \(a harmony note\)/); // C#4 target
   await drill(69, /octave below/);               // A4 target
 
+  // Scales: a 5-note pattern from A3 while the fake mic holds A3 hits only the first and last notes.
+  await page.click('nav button[data-tab=drills]');
+  await page.selectOption('#drillMode', 'scale');
+  await page.selectOption('#scalePattern', 'five');
+  await page.selectOption('#drillLo', '57');
+  await page.selectOption('#drillHi', '64');
+  await page.fill('#drillRounds', '3');
+  await page.click('#drillStart');
+  await page.waitForFunction(() => /Score/.test(document.getElementById('drillTarget').textContent), null, { timeout: 15000 });
+  const chips = await page.$$eval('#drillNotes .pill', (els) => els.map((e) => e.textContent.trim()));
+  assert.strictEqual(chips.length, 9, chips.join(' '));
+  assert.ok(chips[0].endsWith('✓') && chips[8].endsWith('✓') && chips[4].endsWith('✗'), chips.join(' '));
+  assert.strictEqual(await page.textContent('#drillTarget'), 'Score 22');
+  console.log('ok   scales drill scores per note:', chips.join(' '));
+  // Only one root fits (A3 + 7 semitones = E4), so the drill ends after one round and ticks off Scales.
+  await page.waitForSelector('#drillSummary:not([hidden])', { timeout: 8000 });
+  await page.click('nav button[data-tab=today]');
+  assert.ok(await page.isChecked('[data-skill=scales]'), 'scales not ticked');
+  assert.match(await page.textContent('#streak'), /1-day streak/);
+  const fresh = await page.$eval('.skill:nth-child(3)', (el) => getComputedStyle(el).getPropertyValue('--f'));
+  assert.ok(Number(fresh) > 0.3 && Number(fresh) < 0.4, fresh);
+  console.log('ok   finishing a drill ticks the skill, starts a streak and fills its freshness bar');
+
   // Range test picks up the held note.
   await page.click('nav button[data-tab=range]');
   await page.click('[data-range=low]');
