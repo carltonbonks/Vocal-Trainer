@@ -33,6 +33,19 @@
   const HISTORY_SECONDS = 12;
   let ignoreMicUntil = 0; // seconds (ctx time) while a reference tone plays through speakers
   let lastActiveTick = null;
+  let audioUse = 0; // bumped by anything that needs the audio context, so a pending release backs off
+
+  // Close the audio context once nothing needs it (after the mic stops, or after a
+  // chime with the mic off), so the app holds no audio device or thread while idle.
+  function releaseAudio(delayMs) {
+    const c = ctx, token = ++audioUse;
+    if (!c) return;
+    setTimeout(() => {
+      if (stream || ctx !== c || audioUse !== token) return;
+      ctx = null;
+      c.close().catch(() => {});
+    }, delayMs);
+  }
 
   async function listDevices() {
     try {
@@ -45,6 +58,7 @@
 
   async function startMic() {
     $('micError').hidden = true;
+    audioUse++;
     try {
       if (!ctx) ctx = new AudioContext();
       await ctx.resume();
@@ -65,6 +79,7 @@
     } catch (err) {
       $('micError').hidden = false;
       $('micError').textContent = 'Could not open the microphone: ' + (err.message || err.name) + '. Check that the browser has mic permission and your microphone is plugged in.';
+      releaseAudio(0);
     }
   }
 
@@ -75,6 +90,7 @@
     $('level').style.width = '0';
     stopDrill();
     stopSong();
+    releaseAudio(300); // let the tones fade out first
   }
 
   $('micBtn').addEventListener('click', () => (stream ? stopMic() : startMic()));
@@ -878,6 +894,7 @@
       if (!ctx) ctx = new AudioContext();
       const t0 = ctx.currentTime + 0.05;
       [72, 76, 79].forEach((m, i) => playNote(m, t0 + i * 0.18, 0.5));
+      if (!stream) releaseAudio(1500);
     } catch { /* audio unavailable */ }
   }
 
