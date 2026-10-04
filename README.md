@@ -14,12 +14,20 @@ I'm not a professional developer or a vocal coach. I wanted a practice tool shap
 - **Range test:** find your lowest and highest comfortable notes.
 - **Daily skills and progress:** a short daily routine whose skills fade if you skip them, plus progress tracking.
 
-Your practice data stays on your computer: in the browser, and optionally as CSV files in a folder you pick (Progress → Your data). Nothing is sent anywhere.
-
 ## Install
 
-- **As an app:** open the link above in Edge or Chrome and use the browser's *Install app* option. It works offline after that and updates itself.
-- **Windows shortcut bundle:** download [vocal-trainer-windows.zip](https://carltonbonks.github.io/Vocal-Trainer/vocal-trainer-windows.zip), extract it, and run `Install-Vocal-Trainer.bat`. It adds Desktop and Start menu shortcuts that open the app in an Edge window.
+- **As an app (recommended):** open the link above in Edge or Chrome and use the browser's *Install app* option. You get a Desktop/Start menu shortcut and an app window, it works offline, and it picks up new versions on its own.
+- **Windows shortcut bundle:** download [vocal-trainer-windows.zip](https://carltonbonks.github.io/Vocal-Trainer/vocal-trainer-windows.zip), extract it, and run `Install-Vocal-Trainer.bat`. It adds Desktop and Start menu shortcuts that open a local copy of the page in an Edge window. This copy does **not** update itself; download a newer zip and run the installer again to update.
+
+## Privacy, data and performance
+
+**What's sent where.** The app has no accounts, analytics, cookies, ads, or third-party scripts or fonts. Its only network traffic is loading its own files from GitHub Pages. Microphone audio is analysed live in your browser; it is never recorded, saved, or uploaded. GitHub hosts the page, and like any web host it sees your IP address when you load it (see [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)). I don't get any visitor data from it.
+
+**Where your practice history lives.** It's in your browser's storage for this site, on your computer only. The browser keeps each site separate, so the installed app and the Windows bundle (which opens a local file) each have their own history. To keep one history, or to protect it, use Progress → Your data → Choose folder. The app then also saves your history as four CSV files in a folder you pick. Point every copy you use at the same folder. Each one merges the folder's history in when it connects (it may ask you to allow the folder again after a restart). Clearing your browser's data for the site erases the browser copy, but not the folder or an Export file.
+
+**Performance.** Nothing runs when the app is closed. While it's open with the mic off, it's idle. While the mic is on, it measures pitch once per screen refresh (usually 60 times a second) on a short slice of audio (2048 samples). That's light work for a modern computer, but it hasn't been formally benchmarked. It keeps going until you click **Stop mic**, though browsers pause it while the tab is hidden. The mic stays open, and Windows shows its microphone indicator, until you click Stop mic or close the app.
+
+**Updates.** There is no background polling. Each time you open the installed app, it starts instantly from its saved copy and checks GitHub once for newer files (about 100 KB). A new version takes effect the next time you open it.
 
 ## How it's built
 
