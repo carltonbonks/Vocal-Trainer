@@ -801,7 +801,7 @@
     },
     {
       key: 'song', mins: 4, name: 'Song phrase', what: 'Sing one or two lines of your current song.',
-      how: ['In the Song tab, pick one line of Holland, 1945 under "One line at a time" and turn on Repeat.', 'Listen to the guide melody once, then sing along as the bars cross the line. Check you are in the right octave.', 'Stay on the same line until it scores above 70, then move to the next one. Slow the tempo down if it rushes past.'],
+      how: ['In the Song tab, pick one line of Ode to Joy under "One line at a time" and turn on Repeat.', 'Listen to the guide melody once, then sing along as the bars cross the line. Check you are in the right octave.', 'Stay on the same line until it scores above 70, then move to the next one. Slow the tempo down if it rushes past.'],
       why: 'Songs are the goal. A phrase a day is enough to make steady progress without tiring your voice.',
       action: { label: 'Go to Song', tab: 'song' },
     },

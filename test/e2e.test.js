@@ -84,21 +84,21 @@ const assert = require('assert');
   assert.match(await page.textContent('#rangeHistory'), /A3/);
   console.log('ok   range test records A3');
 
-  // Song mode: one line of Holland, 1945 at the original tempo. The fake mic holds A3,
-  // so the A3 notes are hits and the G3/B3 notes are two semitones off.
+  // Song mode: the middle section of Ode to Joy at the original tempo. The fake mic holds A3,
+  // so only the A3 notes (24 of 64 sixteenths) are hits.
   await page.click('nav button[data-tab=song]');
-  await page.selectOption('#songPart', '12-15');
+  await page.selectOption('#songPart', '9-13');
   await page.fill('#songTempo', '100');
   await page.dispatchEvent('#songTempo', 'input');
-  assert.match(await page.textContent('#songRange'), /Notes from G3 to B3/);
+  assert.match(await page.textContent('#songRange'), /Notes from D3 to C4/);
   await page.click('#songStart');
-  await page.waitForFunction(() => /Verse 1, line 4/.test(document.getElementById('songPhase').textContent), null, { timeout: 8000 });
+  await page.waitForFunction(() => /Middle/.test(document.getElementById('songPhase').textContent), null, { timeout: 8000 });
   await page.waitForTimeout(2500);
   await page.screenshot({ path: path.join(__dirname, 'song.png') });
   await page.waitForSelector('#songSummary:not([hidden])', { timeout: 15000 });
   const songRow = await page.$$eval('#songSummary tr', (rows) => rows.slice(1).map((r) => r.textContent));
   assert.strictEqual(songRow.length, 1, songRow.join(' / '));
-  assert.match(songRow[0], /^Verse 1, line 4/);
+  assert.match(songRow[0], /^Middle/);
   const songScore = Number(await page.$eval('#songSummary td.score', (e) => e.textContent));
   assert.ok(songScore > 15 && songScore < 60, `song score ${songScore}`);
   assert.match(songRow[0], /off/);
@@ -114,7 +114,7 @@ const assert = require('assert');
   assert.deepStrictEqual(Object.keys(csv).sort(), ['attempts.csv', 'daily.csv', 'ranges.csv', 'sessions.csv']);
   assert.match(csv['sessions.csv'], /,scale,five,1,9,22,/);
   assert.match(csv['ranges.csv'], /,A3,/);
-  assert.match(csv['sessions.csv'], /,song,"Holland, 1945 \| Verse 1, line 4 \| key 0 \| 99 bpm",1,\d+,/);
+  assert.match(csv['sessions.csv'], /,song,"Ode to Joy \| Middle \| key 0 \| 96 bpm",1,\d+,/);
   console.log('ok   choosing a folder writes four CSV files');
   const before = await page.evaluate(() => ['sessions', 'ranges', 'minutes', 'done'].map((k) => localStorage.getItem('vt.' + k)));
   // A new range test saves to the folder automatically.

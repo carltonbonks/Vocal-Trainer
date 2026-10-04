@@ -18,9 +18,9 @@ html = html.replace("/*APP*/", (src / "app.js").read_text())
 
 version = hashlib.sha1(html.encode()).hexdigest()[:10]
 (out / "sw.js").write_text((src / "pwa/sw.js").read_text().replace("__VERSION__", version))
-for name in ["manifest.webmanifest", "icon.svg"]:
+for name in ["manifest.webmanifest", "icon.svg", "icon-192.png", "icon-256.png", "icon-512.png"]:
     shutil.copy(src / "pwa" / name, out / name)
-print(f"built dist/ (page {len(html) // 1024} KB, version {version}); run scripts/render_icons.js for PNG icons")
+print(f"built dist/ (page {len(html) // 1024} KB, version {version})")
 
 # Windows desktop bundle: the page, an icon, and a one-time setup script.
 import struct

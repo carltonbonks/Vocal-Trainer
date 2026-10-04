@@ -1,4 +1,4 @@
-// Renders src/pwa/icon.svg to the PNG sizes install prompts need.
+// Renders src/pwa/icon.svg to the PNG sizes install prompts need, next to it in src/pwa/.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +8,7 @@ const path = require('path');
   for (const size of [192, 256, 512]) {
     const page = await browser.newPage({ viewport: { width: size, height: size } });
     await page.setContent(`<style>body{margin:0}svg{width:${size}px;height:${size}px;display:block}</style>${svg}`);
-    await page.screenshot({ path: path.join(__dirname, '..', `dist/icon-${size}.png`), omitBackground: true });
+    await page.screenshot({ path: path.join(__dirname, '..', `src/pwa/icon-${size}.png`), omitBackground: true });
   }
   await browser.close();
 })();
