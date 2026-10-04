@@ -1,5 +1,7 @@
 # Vocal Trainer
 
+Software to practice and learn vocal singing skills. Co-authored with Claude.
+
 A browser-based singing practice tool: live pitch view, pitch-matching, sustain and scales drills that flag harmony and wrong-octave errors, a song mode that scrolls a transcribed melody past a sing line and scores each line, a range test, daily skills that fade without practice, and progress tracking.
 
 Open `dist/vocal-trainer.html` in Chrome or Edge, or serve `dist/` over https (e.g. GitHub Pages) to install it as an app with offline support. Click **Start mic** and allow microphone access. Data stays in the browser (localStorage); use Progress → Export to back it up.
