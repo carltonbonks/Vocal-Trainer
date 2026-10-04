@@ -1,5 +1,5 @@
 // Serves the app from cache so it opens offline; refreshes the cache in the background.
-const CACHE = 'vocal-trainer-40aaf7e9db';
+const CACHE = 'vocal-trainer-3282cb2699';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {

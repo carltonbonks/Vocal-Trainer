@@ -10,6 +10,7 @@ out.mkdir(exist_ok=True)
 html = (src / "index.html").read_text()
 html = html.replace("/*CORE*/", (src / "core.js").read_text())
 html = html.replace("/*CSV*/", (src / "csv.js").read_text())
+html = html.replace("/*SONGS*/", (src / "songs.js").read_text())
 html = html.replace("/*APP*/", (src / "app.js").read_text())
 (out / "index.html").write_text(html)
 # Same page under a friendlier name for opening straight from disk.

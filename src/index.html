@@ -77,6 +77,7 @@ th { color: var(--quiet); font-weight: 500; }
 .btn.small { padding: 5px 10px; font-size: 13px; }
 .pill.streak { background: var(--accent); color: #fff; font-weight: 600; }
 #drillNotes { margin-top: 6px; }
+#songSummary td.score { font-weight: 700; font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) { .skill { grid-template-columns: 32px 1fr; } .fresh { grid-column: 2; } }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; }
 .bars div { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: .8; }
@@ -94,6 +95,7 @@ th { color: var(--quiet); font-weight: 500; }
     <button data-tab="today" class="active">Today</button>
     <button data-tab="live">Live pitch</button>
     <button data-tab="drills">Drills</button>
+    <button data-tab="song">Song</button>
     <button data-tab="range">Range</button>
     <button data-tab="progress">Progress</button>
   </nav>
@@ -180,6 +182,36 @@ th { color: var(--quiet); font-weight: 500; }
     <div class="card" id="drillSummary" hidden></div>
   </section>
 
+  <section class="tab" id="tab-song">
+    <div class="card">
+      <h2 id="songTitle">Song</h2>
+      <div class="row">
+        <label>Practise <select id="songPart"></select></label>
+        <label>Key <select id="songKey"></select></label>
+        <label>Tempo <input type="range" id="songTempo" min="50" max="100" step="5" value="80"> <span id="songTempoLabel"></span></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="songGuide" checked> Play the melody (headphones)</label>
+        <label><input type="checkbox" id="songClick" checked> Click on each beat</label>
+        <label><input type="checkbox" id="songLoop"> Repeat until I stop</label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="songStart">Start</button>
+        <button class="btn" id="songStop" disabled>Stop</button>
+        <span class="quiet" id="songRange"></span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><div class="quiet" id="songPhase">Pick a part and press Start. You get one bar of clicks, then sing along with the bars as they reach the line.</div><div class="big" id="songNow">&nbsp;</div></div>
+        <div class="quiet" id="songPass"></div>
+      </div>
+      <canvas class="roll" id="songLane" style="height:320px;margin-top:8px"></canvas>
+      <p class="quiet" style="margin:8px 0 0">Each bar is a note to sing; sing it as it crosses the line. Bars turn green when you hit them, purple for a harmony note, blue for the right note in the wrong octave, red when off, grey when not heard.</p>
+    </div>
+    <div class="card" id="songSummary" hidden></div>
+  </section>
+
   <section class="tab" id="tab-range">
     <div class="card">
       <h2>Range test</h2>
@@ -214,6 +246,7 @@ th { color: var(--quiet); font-weight: 500; }
 </main>
 <script>/*CORE*/</script>
 <script>/*CSV*/</script>
+<script>/*SONGS*/</script>
 <script>/*APP*/</script>
 <script>
   // Offline support and install when served over http(s); opening the file directly skips this.

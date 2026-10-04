@@ -125,5 +125,60 @@ test('freshness rises with daily practice and fades when skipped', () => {
   assert.ok(VT.freshness(['2026-10-10'], '2026-10-10') < 0.4);
 });
 
+require('../src/songs.js');
+const holland = globalThis.VTsongs.find((s) => s.id === 'holland-1945');
+
+test('Holland, 1945 parses, every bar adds up and no notes overlap', () => {
+  const notes = VT.parseSongNotes(holland.notes);
+  assert.ok(notes.length > 300, `only ${notes.length} notes`);
+  const abs = notes.map((n) => ({ ...n, a: (n.bar - 1) * 16 + n.pos }));
+  for (let i = 1; i < abs.length; i++) {
+    const p = abs[i - 1], n = abs[i];
+    assert.ok(n.pos < 16, `bar ${n.bar} position ${n.pos}`);
+    assert.ok(p.a + p.len <= n.a, `bar ${p.bar}+${p.pos} overlaps bar ${n.bar}+${n.pos}`);
+  }
+  const lo = Math.min(...notes.map((n) => n.midi)), hi = Math.max(...notes.map((n) => n.midi));
+  assert.strictEqual(VT.noteName(lo), 'F#3');
+  assert.strictEqual(VT.noteName(hi), 'G4');
+});
+
+test('song phrases are named by section and line', () => {
+  const ph = VT.songPhrases(holland);
+  assert.strictEqual(ph[0].label, 'Verse 1, line 1');
+  assert.strictEqual(ph.find((p) => p.bar === 20).label, 'Pre-chorus 1');
+  assert.strictEqual(ph.find((p) => p.bar === 25).label, 'Chorus 1, line 3');
+  assert.strictEqual(ph.at(-1).label, 'Verse 3, line 8');
+});
+
+test('song timeline: tempo, transpose and bar range', () => {
+  const tl = VT.songTimeline(holland, { fromBar: 21, toBar: 23, bpm: 60, transpose: -12 });
+  assert.strictEqual(tl[0].midi, VT.parseNote('G3'));
+  assert.strictEqual(tl[0].start, 0);
+  assert.strictEqual(tl[0].dur, 1); // a quarter note at 60 bpm
+  assert.strictEqual(tl[1].start, 1);
+  assert.ok(tl.every((n) => n.label === 'Chorus 1, line 1'));
+  assert.strictEqual(tl.length, 7);
+});
+
+test('timed notes: on, harmony, octave, missed, and length-weighted phrase scores', () => {
+  const notes = [
+    { midi: 60, start: 0, dur: 1, phrase: 0, label: 'A' },
+    { midi: 62, start: 1, dur: 0.25, phrase: 0, label: 'A' },
+    { midi: 64, start: 2, dur: 1, phrase: 1, label: 'B' },
+    { midi: 65, start: 3, dur: 1, phrase: 1, label: 'B' },
+  ];
+  const frames = [];
+  const sing = (a, b, m) => { for (let t = a; t < b; t += 0.016) frames.push({ t, midi: m }); };
+  sing(0, 1, 60.1);   // on
+  sing(1, 1.25, 59);  // a minor third below: harmony
+  sing(2, 3, 52);     // an octave below
+  const r = notes.map((n) => VT.scoreTimedNote(frames, n));
+  assert.deepStrictEqual(r.map((x) => x.kind), ['on', 'harmony', 'octave', 'missed']);
+  const ph = VT.phraseScores(notes, r);
+  assert.strictEqual(ph[0].score, 80); // 1 s hit out of 1.25 s
+  assert.strictEqual(ph[1].score, 0);
+  assert.deepStrictEqual(ph[1].kinds, { octave: 1, missed: 1 });
+});
+
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passed');

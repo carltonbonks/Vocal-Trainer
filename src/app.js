@@ -1,5 +1,5 @@
 (function () {
-  const { detectPitch, freqToMidi, midiToFreq, noteName, median, scoreAttempt, stableNote, scoreSequence, freshness } = window.VT;
+  const { detectPitch, freqToMidi, midiToFreq, noteName, median, scoreAttempt, stableNote, scoreSequence, freshness, songPhrases, songTimeline, scoreTimedNote, phraseScores } = window.VT;
   const $ = (id) => document.getElementById(id);
 
   // ---------- storage ----------
@@ -24,6 +24,7 @@
     document.querySelectorAll('section.tab').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + tab));
     if (tab === 'progress') renderProgress();
     if (tab === 'today') renderToday();
+    if (tab === 'song' && !song) drawSongLane();
   });
 
   // ---------- audio ----------
@@ -73,6 +74,7 @@
     $('micBtn').textContent = 'Start mic';
     $('level').style.width = '0';
     stopDrill();
+    stopSong();
   }
 
   $('micBtn').addEventListener('click', () => (stream ? stopMic() : startMic()));
@@ -81,14 +83,14 @@
   listDevices();
 
   // A soft piano-ish reference tone.
-  function playNote(midi, start, dur) {
+  function playNote(midi, start, dur, dest = ctx.destination) {
     const f = midiToFreq(midi);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, start);
     g.gain.linearRampToValueAtTime(0.25, start + 0.02);
     g.gain.exponentialRampToValueAtTime(0.08, start + dur * 0.7);
     g.gain.linearRampToValueAtTime(0, start + dur);
-    g.connect(ctx.destination);
+    g.connect(dest);
     [[1, 'triangle', 1], [2, 'sine', 0.3]].forEach(([mult, type, amp]) => {
       const o = ctx.createOscillator();
       const og = ctx.createGain();
@@ -152,6 +154,8 @@
     updateLive(midi);
     if (drill) drillTick(t, midi);
     if (rangeMode) rangeTick(t, midi);
+    if (song) songTick(t, midi);
+    else if ($('tab-song').classList.contains('active')) drawSongLane();
     requestAnimationFrame(tick);
   }
 
@@ -448,6 +452,273 @@
   $('drillStop').addEventListener('click', stopDrill);
   $('drillReplay').addEventListener('click', () => { if (drill && drill.phase !== 'listen') { stopDroneNow(); playRefs(); } });
 
+  // ---------- song mode ----------
+  // Sing along to a transcribed melody: note bars scroll towards a line, the
+  // guide tone and click play on headphones, and every note is scored as it passes.
+  const SONG = window.VTsongs[0];
+  const SONG_PHRASES = songPhrases(SONG);
+  const LATENCY = 0.05; // mic frames describe audio from slightly earlier
+  const BEHIND = 2.5, AHEAD = 6; // seconds of lane shown either side of the line
+  let song = null;
+
+  function fillSongControls() {
+    $('songTitle').textContent = `${SONG.title} (${SONG.artist})`;
+    const sel = $('songPart');
+    sel.add(new Option('Whole song', `0-${Infinity}`));
+    const sections = SONG.sections.map((s, i) => ({ ...s, end: SONG.sections[i + 1]?.bar ?? Infinity }));
+    const sg = document.createElement('optgroup'); sg.label = 'Sections';
+    sections.forEach((s) => sg.append(new Option(s.name, `${s.bar}-${s.end}`)));
+    const pg = document.createElement('optgroup'); pg.label = 'One line at a time';
+    SONG_PHRASES.forEach((p) => pg.append(new Option(p.label, `${p.bar}-${p.end}`)));
+    sel.append(sg, pg);
+    for (let k = 12; k >= -12; k--) $('songKey').add(new Option(k === 0 ? 'Original key' : k === -12 ? 'An octave lower' : k === 12 ? 'An octave higher' : `${k > 0 ? '+' : ''}${k} semitone${Math.abs(k) > 1 ? 's' : ''}`, k));
+    const saved = store.get('song', {});
+    if (saved.part && [...sel.options].some((o) => o.value === saved.part)) sel.value = saved.part;
+    $('songKey').value = saved.key ?? 0;
+    $('songTempo').value = saved.tempo ?? 80;
+    ['songPart', 'songKey', 'songTempo'].forEach((id) => $(id).addEventListener('input', onSongSettings));
+    onSongSettings();
+  }
+
+  function songSettings() {
+    const [from, to] = $('songPart').value.split('-').map(Number);
+    const firstBar = Math.min(...SONG.phrases);
+    const fromBar = Math.max(from, firstBar);
+    const bpm = Math.round((SONG.bpm * +$('songTempo').value) / 100);
+    return { fromBar, toBar: to, bpm, transpose: +$('songKey').value };
+  }
+
+  function onSongSettings() {
+    store.set('song', { part: $('songPart').value, key: +$('songKey').value, tempo: +$('songTempo').value });
+    const st = songSettings();
+    $('songTempoLabel').textContent = `${st.bpm} bpm${+$('songTempo').value === 100 ? ' (original)' : ''}`;
+    const tl = songTimeline(SONG, st);
+    const ms = tl.map((n) => n.midi);
+    $('songRange').textContent = tl.length ? `Notes from ${noteName(Math.min(...ms))} to ${noteName(Math.max(...ms))}` : '';
+    if (!song) drawSongLane();
+  }
+
+  function startSong() {
+    if (!analyser) { $('songPhase').textContent = 'Start the mic first (top right).'; return; }
+    stopDrill();
+    const st = songSettings();
+    const notes = songTimeline(SONG, st);
+    if (!notes.length) return;
+    const beat = 60 / st.bpm;
+    const out = ctx.createGain();
+    out.gain.value = 1;
+    out.connect(ctx.destination);
+    song = {
+      ...st, notes, beat, out, pass: 0, passes: [],
+      guide: $('songGuide').checked, click: $('songClick').checked, loop: $('songLoop').checked,
+      lo: Math.min(...notes.map((n) => n.midi)) - 3, hi: Math.max(...notes.map((n) => n.midi)) + 3,
+      length: notes.at(-1).start + notes.at(-1).dur,
+    };
+    $('songSummary').hidden = true;
+    $('songStart').disabled = true; $('songStop').disabled = false;
+    startPass(ctx.currentTime + 0.2);
+  }
+
+  // One run through the chosen part, after a bar of count-in clicks.
+  function startPass(at) {
+    song.pass++;
+    song.t0 = at + 4 * song.beat;
+    song.frames = []; song.results = []; song.scored = 0; song.scheduled = 0; song.clicks = -4;
+    $('songPass').textContent = song.loop ? `Pass ${song.pass}` : '';
+    $('songPhase').textContent = 'Count in: 1, 2, 3, 4...';
+  }
+
+  function click(at, accent) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = accent ? 1600 : 1100;
+    g.gain.setValueAtTime(0.12, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.05);
+    o.connect(g).connect(song.out); o.start(at); o.stop(at + 0.06);
+  }
+
+  function songTick(t, midi) {
+    const rel = t - LATENCY - song.t0; // seconds into the part, on the singer's clock
+    const ahead = t + 0.3 - song.t0;   // schedule audio a little ahead of time
+    // Guide tone and click.
+    while (song.scheduled < song.notes.length && song.notes[song.scheduled].start < ahead) {
+      const n = song.notes[song.scheduled++];
+      if (song.guide) playNote(n.midi, song.t0 + n.start, Math.max(0.12, n.dur * 0.95), song.out);
+    }
+    while (song.clicks * song.beat < Math.min(ahead, song.length + 0.01)) {
+      if (song.click || song.clicks < 0) click(song.t0 + song.clicks * song.beat, ((song.clicks % 4) + 4) % 4 === 0);
+      song.clicks++;
+    }
+    if (midi !== null && rel >= -0.5) song.frames.push({ t: rel, midi });
+    // Score each note once its window has passed.
+    while (song.scored < song.notes.length) {
+      const n = song.notes[song.scored];
+      if (rel < n.start + n.dur + 0.1) break;
+      song.results.push(scoreTimedNote(song.frames, n));
+      song.scored++;
+    }
+    const cur = song.notes.find((n) => rel < n.start + n.dur) || null;
+    if (rel >= 0) {
+      $('songPhase').textContent = cur ? cur.label : 'Finishing...';
+      $('songNow').textContent = cur ? (rel >= cur.start ? noteName(cur.midi) : `Next: ${noteName(cur.midi)}`) : ' ';
+    }
+    if ($('tab-song').classList.contains('active')) drawSongLane(rel);
+    if (song.scored === song.notes.length && rel > song.length + 0.3) finishPass();
+  }
+
+  function finishPass() {
+    const phrases = phraseScores(song.notes, song.results);
+    const voiced = song.results.some((r) => r.voiced);
+    song.passes.push({ phrases, results: song.results });
+    renderSongSummary(phrases);
+    if (voiced) saveSongPass(phrases);
+    if (song.loop) startPass(ctx.currentTime + 0.6);
+    else endSong('Done. Saved to Progress.');
+  }
+
+  const KIND_TEXT = { harmony: 'on a harmony note', octave: 'in the wrong octave', off: 'off', sharp: 'a little sharp', flat: 'a little flat', missed: 'not heard' };
+  function renderSongSummary(phrases) {
+    const time = phrases.reduce((a, p) => a + p.time, 0), hit = phrases.reduce((a, p) => a + p.hitTime, 0);
+    const overall = Math.round((hit / time) * 100);
+    const issues = (p) => Object.entries(p.kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="pill k-${k === 'missed' ? 'off' : k}">${n} ${KIND_TEXT[k] || k}</span>`).join('');
+    const worst = phrases.filter((p) => p.score < 70).sort((a, b) => a.score - b.score)[0];
+    const harm = phrases.reduce((a, p) => a + (p.kinds.harmony || 0), 0);
+    let advice = overall >= 80 ? 'Strong run. Try a faster tempo, or the next section.' : worst ? `Work on ${worst.label}: pick it under "One line at a time", turn on Repeat, and sing it until it scores above 70.` : 'Keep going.';
+    if (harm >= 3) advice = `You landed on harmony notes ${harm} times. That is your known habit: hum the guide melody first, then sing it softly and watch the bars.`;
+    const s = $('songSummary');
+    s.hidden = false;
+    s.innerHTML = `<h2>${song.pass > 1 ? `Pass ${song.pass}: ` : ''}score ${overall}</h2>
+      <table><tr><th>Line</th><th>Score</th><th>Notes hit</th><th>Misses</th></tr>
+      ${phrases.map((p) => `<tr><td>${p.label}</td><td class="score k-${p.score >= 80 ? 'on' : p.score >= 50 ? 'sharp' : 'off'}">${p.score}</td><td>${p.hits}/${p.total}</td><td>${issues(p)}</td></tr>`).join('')}</table>
+      <p class="quiet">${advice}</p>`;
+    song.overall = overall;
+  }
+
+  // Saved like a drill session: each line of the song is one round, each note an attempt.
+  function saveSongPass(phrases) {
+    const items = song.results.map((r) => ({ kind: r.hit ? 'on' : r.kind }));
+    const count = (k) => items.filter((r) => r.kind === k).length;
+    const results = phrases.map((p) => {
+      const idx = song.notes.map((n, i) => (n.phrase === p.phrase ? i : -1)).filter((i) => i >= 0);
+      const rs = idx.map((i) => song.results[i]);
+      return { root: song.notes[idx[0]].midi, voiced: rs.some((r) => r.voiced), score: p.score, notes: rs.map((r) => ({ target: r.target, kind: r.hit ? 'on' : r.kind, cents: r.cents })) };
+    });
+    const part = $('songPart').selectedOptions[0].textContent;
+    const session = {
+      date: new Date().toISOString(), mode: 'song', pattern: `${SONG.title} | ${part} | key ${song.transpose > 0 ? '+' : ''}${song.transpose} | ${song.bpm} bpm`,
+      rounds: results.length, total: items.length, avgScore: song.overall,
+      onPitch: count('on'), harmony: count('harmony'), octave: count('octave'), off: items.length - count('on') - count('harmony') - count('octave'),
+      range: [song.lo + 3, song.hi - 3], results,
+    };
+    const all = store.get('sessions', []); all.push(session); store.set('sessions', all);
+    markDone('song');
+  }
+
+  function endSong(msg) {
+    if (!song) return;
+    const out = song.out;
+    out.gain.setValueAtTime(out.gain.value, ctx.currentTime);
+    out.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.05);
+    setTimeout(() => out.disconnect(), 200);
+    song = null;
+    $('songPhase').textContent = msg;
+    $('songNow').textContent = ' ';
+    $('songStart').disabled = false; $('songStop').disabled = true;
+    drawSongLane();
+  }
+  function stopSong() {
+    if (!song) return;
+    // A pass stopped part-way still counts for the lines already finished.
+    const done = song.notes.slice(0, song.scored).filter((n, i, a) => {
+      const next = song.notes[song.scored];
+      return !next || n.phrase !== next.phrase;
+    });
+    if (done.length && song.results.slice(0, done.length).some((r) => r.voiced)) {
+      const notes = song.notes;
+      song.notes = done; song.results = song.results.slice(0, done.length);
+      const phrases = phraseScores(song.notes, song.results);
+      renderSongSummary(phrases);
+      saveSongPass(phrases);
+      song.notes = notes;
+      return endSong('Stopped. The lines you finished are saved to Progress.');
+    }
+    endSong('Stopped.');
+  }
+
+  // The note lane: time runs right to left; notes are sung as they cross the line.
+  function drawSongLane(rel = null) {
+    const canvas = $('songLane');
+    if (!canvas.clientWidth) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== w * dpr || canvas.height !== h * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+    const g = canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const css = getComputedStyle(document.documentElement);
+    const col = (n) => css.getPropertyValue(n).trim();
+    g.clearRect(0, 0, w, h);
+
+    const notes = song ? song.notes : songTimeline(SONG, songSettings());
+    if (!notes.length) return;
+    const lo = song ? song.lo : Math.min(...notes.map((n) => n.midi)) - 3;
+    const hi = song ? song.hi : Math.max(...notes.map((n) => n.midi)) + 3;
+    const now = rel ?? -1.5;
+    const left = 44, lineX = left + (w - left) * (BEHIND / (BEHIND + AHEAD));
+    const pps = (w - left) / (BEHIND + AHEAD);
+    const X = (t) => lineX + (t - now) * pps;
+    const Y = (m) => h - ((m - lo) / (hi - lo)) * h;
+    const rowH = h / (hi - lo);
+
+    g.font = '11px system-ui, sans-serif';
+    for (let m = Math.ceil(lo); m <= hi; m++) {
+      g.strokeStyle = ((m % 12) + 12) % 12 === 0 ? col('--gridC') : col('--grid');
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(left, Y(m)); g.lineTo(w, Y(m)); g.stroke();
+      if (!noteName(m).includes('#')) { g.fillStyle = col('--quiet'); g.fillText(noteName(m), 6, Y(m) + 4); }
+    }
+    // Phrase labels along the top.
+    g.fillStyle = col('--quiet');
+    let lastPhrase = null;
+    notes.forEach((n) => {
+      if (n.phrase === lastPhrase) return;
+      lastPhrase = n.phrase;
+      const x = X(n.start);
+      if (x > left - 200 && x < w) { g.fillText(n.label, Math.max(left + 4, x), 14); }
+    });
+    // Note bars.
+    const KIND_COL = { on: '--good', harmony: '--harm', octave: '--accent', off: '--bad', sharp: '--warn', flat: '--warn' };
+    notes.forEach((n, i) => {
+      const x0 = X(n.start), x1 = X(n.start + n.dur);
+      if (x1 < left || x0 > w) return;
+      const r = song && song.results[i];
+      g.fillStyle = r ? (r.hit ? col('--good') : r.kind === 'missed' ? col('--line') : col(KIND_COL[r.kind] || '--bad')) : col('--accent');
+      g.globalAlpha = r ? 0.85 : 0.35;
+      const y = Y(n.midi + 0.5), hh = Math.max(6, rowH);
+      g.beginPath(); g.roundRect(Math.max(left, x0 + 1), y, Math.max(3, Math.min(x1, w) - Math.max(left, x0 + 1) - 2), hh, 4); g.fill();
+      g.globalAlpha = 1;
+    });
+    // The sing line.
+    g.strokeStyle = col('--ink'); g.globalAlpha = 0.5; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(lineX, 0); g.lineTo(lineX, h); g.stroke(); g.globalAlpha = 1;
+    // Your voice, coloured by distance from the note being sung at that moment.
+    if (!song) return;
+    g.lineWidth = 3; g.lineCap = 'round';
+    let prev = null, k = 0;
+    for (const p of song.frames) {
+      if (p.t < now - BEHIND) { prev = null; continue; }
+      while (k < notes.length - 1 && notes[k].start + notes[k].dur <= p.t) k++;
+      const n = notes[k];
+      const inNote = p.t >= n.start && p.t < n.start + n.dur;
+      const dev = Math.abs(p.midi - (inNote ? n.midi : Math.round(p.midi))) * 100;
+      g.strokeStyle = dev <= 25 ? col('--good') : dev <= 50 ? col('--warn') : col('--bad');
+      if (prev && p.t - prev.t < 0.15) { g.beginPath(); g.moveTo(X(prev.t), Y(prev.midi)); g.lineTo(X(p.t), Y(p.midi)); g.stroke(); }
+      prev = p;
+    }
+  }
+
+  $('songStart').addEventListener('click', startSong);
+  $('songStop').addEventListener('click', stopSong);
+  window.addEventListener('resize', () => { if (!song) drawSongLane(); });
+  fillSongControls();
+
   // ---------- range test ----------
   let rangeMode = null, rangeFrames = [];
   const rangeResult = {};
@@ -530,9 +801,9 @@
     },
     {
       key: 'song', mins: 4, name: 'Song phrase', what: 'Sing one or two lines of your current song.',
-      how: ['Pick one phrase of Holland, 1945. Listen to it once.', 'Sing it with the Live pitch view open and check you are in the right octave.', 'Repeat the same phrase until it feels easy, then move to the next one.'],
+      how: ['In the Song tab, pick one line of Holland, 1945 under "One line at a time" and turn on Repeat.', 'Listen to the guide melody once, then sing along as the bars cross the line. Check you are in the right octave.', 'Stay on the same line until it scores above 70, then move to the next one. Slow the tempo down if it rushes past.'],
       why: 'Songs are the goal. A phrase a day is enough to make steady progress without tiring your voice.',
-      action: { label: 'Start 4-minute timer', timer: 240 },
+      action: { label: 'Go to Song', tab: 'song' },
     },
   ];
 
@@ -618,6 +889,7 @@
     const k = e.target.dataset.action;
     if (!k) return;
     const sk = SKILLS.find((x) => x.key === k);
+    if (sk.action.tab) { document.querySelector(`nav button[data-tab=${sk.action.tab}]`).click(); return; }
     if (sk.action.mode) {
       $('drillMode').value = sk.action.mode;
       syncPatternVisibility();
@@ -638,7 +910,7 @@
   renderToday();
 
   // ---------- progress ----------
-  const MODE_NAMES = { single: 'Single notes', interval: 'Intervals', sustain: 'Sustain', scale: 'Scales' };
+  const MODE_NAMES = { single: 'Single notes', interval: 'Intervals', sustain: 'Sustain', scale: 'Scales', song: 'Song' };
   function renderProgress() {
     const mins = store.get('minutes', {});
     const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 13 + i); return d.toLocaleDateString('en-CA'); });
@@ -649,7 +921,7 @@
     const sessions = store.get('sessions', []);
     if (sessions.length) {
       $('sessions').innerHTML = '<table><tr><th>Date</th><th>Drill</th><th>Notes</th><th>Avg score</th><th>On pitch</th><th>Harmony</th><th>Octave</th></tr>' +
-        [...sessions].reverse().slice(0, 50).map((s) => `<tr><td>${new Date(s.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td><td>${MODE_NAMES[s.mode] || s.mode}</td><td>${noteName(s.range[0])}–${noteName(s.range[1])}</td><td><b>${s.avgScore}</b></td><td>${s.onPitch}/${s.total ?? s.rounds}</td><td>${s.harmony}</td><td>${s.octave}</td></tr>`).join('') + '</table>';
+        [...sessions].reverse().slice(0, 50).map((s) => `<tr><td>${new Date(s.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td><td>${MODE_NAMES[s.mode] || s.mode}${s.mode === 'song' && s.pattern ? ': ' + s.pattern.split(' | ')[1] : ''}</td><td>${noteName(s.range[0])}–${noteName(s.range[1])}</td><td><b>${s.avgScore}</b></td><td>${s.onPitch}/${s.total ?? s.rounds}</td><td>${s.harmony}</td><td>${s.octave}</td></tr>`).join('') + '</table>';
     }
   }
 

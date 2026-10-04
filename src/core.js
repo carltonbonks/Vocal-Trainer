@@ -182,5 +182,75 @@
     return Math.min(1, sum / full);
   }
 
-  root.VT = { NOTE_NAMES, freqToMidi, midiToFreq, noteName, parseNote, rms, detectPitch, median, classifyOffset, scoreAttempt, stableNote, scoreSequence, freshness };
+  // ---------- songs ----------
+  // Parse a song's note text (see songs.js) into [{bar, pos, midi, len}], positions in sixteenths.
+  function parseSongNotes(text) {
+    const notes = [];
+    for (const line of text.split('\n')) {
+      const m = /^\s*(\d+):(.*)$/.exec(line);
+      if (!m) continue;
+      for (const tok of m[2].trim().split(/\s+/).filter(Boolean)) {
+        const n = /^(\d+)([A-G]#?-?\d)\/(\d+)$/.exec(tok);
+        if (!n) throw new Error(`Bad note "${tok}" in bar ${m[1]}`);
+        notes.push({ bar: +m[1], pos: +n[1], midi: parseNote(n[2]), len: +n[3] });
+      }
+    }
+    return notes;
+  }
+
+  // Name every phrase, e.g. "Verse 1, line 2", from the section and phrase start bars.
+  function songPhrases(song) {
+    const sectionAt = (bar) => [...song.sections].reverse().find((s) => s.bar <= bar);
+    const count = {};
+    return song.phrases.map((bar, i) => {
+      const sec = sectionAt(bar);
+      count[sec.name] = (count[sec.name] || 0) + 1;
+      return { bar, end: song.phrases[i + 1] ?? Infinity, section: sec.name, line: count[sec.name] };
+    }).map((p) => {
+      const lines = song.phrases.filter((b) => sectionAt(b) === sectionAt(p.bar)).length;
+      return { ...p, label: lines > 1 ? `${p.section}, line ${p.line}` : p.section };
+    });
+  }
+
+  // Timed targets for bars [fromBar, toBar): start and dur in seconds from the start of fromBar.
+  function songTimeline(song, { fromBar, toBar = Infinity, bpm = song.bpm, transpose = 0 }) {
+    const sixteenth = 60 / bpm / 4;
+    const phrases = songPhrases(song);
+    return parseSongNotes(song.notes)
+      .filter((n) => n.bar >= fromBar && n.bar < toBar)
+      .map((n) => {
+        const ph = phrases.findIndex((p) => n.bar >= p.bar && n.bar < p.end);
+        return { midi: n.midi + transpose, start: ((n.bar - fromBar) * 16 + n.pos) * sixteenth, dur: n.len * sixteenth, phrase: ph, label: phrases[ph]?.label ?? '' };
+      });
+  }
+
+  // Score one timed note from voiced frames [{t, midi}] on the same clock.
+  // The first part of the note is skipped while the voice moves onto it, and a
+  // little time after it is allowed for singing late.
+  function scoreTimedNote(frames, note, opts = {}) {
+    const lead = Math.min(opts.lead ?? 0.1, note.dur * 0.3), lag = opts.lag ?? 0.08;
+    const a = note.start + lead, b = note.start + note.dur + lag;
+    const ms = frames.filter((f) => f.t >= a && f.t < b).map((f) => f.midi);
+    if (ms.length < 3) return { target: note.midi, voiced: false, kind: 'missed', hit: false };
+    const dev = median(ms) - note.midi;
+    const o = classifyOffset(dev);
+    return { target: note.midi, voiced: true, sung: median(ms), cents: Math.round(dev * 100), kind: o.kind, label: o.label, hit: Math.abs(dev) <= 0.5 };
+  }
+
+  // Score per phrase, weighting each note by its length so long held notes count more
+  // than quick passing ones. results[i] belongs to notes[i].
+  function phraseScores(notes, results) {
+    const out = [];
+    notes.forEach((n, i) => {
+      let p = out.find((x) => x.phrase === n.phrase);
+      if (!p) out.push((p = { phrase: n.phrase, label: n.label, total: 0, hits: 0, time: 0, hitTime: 0, kinds: {} }));
+      const r = results[i];
+      p.total++; p.time += n.dur;
+      if (r.hit) { p.hits++; p.hitTime += n.dur; } else p.kinds[r.kind] = (p.kinds[r.kind] || 0) + 1;
+    });
+    for (const p of out) p.score = Math.round((p.hitTime / p.time) * 100);
+    return out;
+  }
+
+  root.VT = { NOTE_NAMES, freqToMidi, midiToFreq, noteName, parseNote, rms, detectPitch, median, classifyOffset, scoreAttempt, stableNote, scoreSequence, freshness, parseSongNotes, songPhrases, songTimeline, scoreTimedNote, phraseScores };
 })(typeof window !== 'undefined' ? window : globalThis);
